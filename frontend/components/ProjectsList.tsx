@@ -17,6 +17,7 @@ import {
   AlertCircle,
   X,
   ExternalLink,
+  Trash2,
 } from "lucide-react";
 import SchedulerModal from "./SchedulerModal";
 import ColumnStatisticsModal from "./ColumnStatisticsModal";
@@ -67,33 +68,23 @@ export default function ProjectsList({
   );
 
   useEffect(() => {
-    // Helper function to extract website domain from project name
-    // Pattern: "(Brand Name) ... website_domain_productname"
-    // Examples:
-    // "(MSA Pricing) Filter-technik.de_Kraftstoffvorfilter" -> "Filter-technik.de"
-    // "(Brand) example.com_product" -> "example.com"
     const extractWebsite = (projectName: string): string => {
-      // Match pattern: ) followed by domain (with dots), followed by _
       const match = projectName.match(/\)\s*([^_\s]+(?:\.[^_\s]+)*?)_/);
       if (match && match[1]) {
         return match[1];
       }
-      // Fallback: use first 30 chars or project name
       return projectName.substring(0, 30) || "Other";
     };
 
-    // Group projects by website domain
     const groups = new Map<string, Project[]>();
 
     projects.forEach((project) => {
       const projectName = project.name || project.title || "Unknown";
-      // Extract website domain from project name
       const website = extractWebsite(projectName);
 
       if (!groups.has(website)) {
         groups.set(website, []);
       }
-      // Preserve all project data including last_run
       groups.get(website)!.push({
         ...project,
         name: projectName,
@@ -155,10 +146,46 @@ export default function ProjectsList({
     setShowCSVModal(true);
   };
 
-  const handleCancelRun = async (token: string) => {
+  // FIX Issue #2: Delete project from site AND ParseHub app
+  const handleDeleteProject = async (token: string, name: string) => {
+    if (
+      !confirm(
+        `Are you sure you want to DELETE "${name}"?\n\nThis will permanently delete the project from ParseHub and cannot be undone.`,
+      )
+    )
+      return;
     setLoading(token);
     try {
-      const response = await fetch(`/api/runs/${token}/cancel`, {
+      const response = await fetch(`/api/projects/${token}/delete`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          ...getApiHeaders(),
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Failed to delete project`);
+      }
+
+      alert(`Project "${name}" deleted successfully.`);
+      window.dispatchEvent(new CustomEvent("projectStatusUpdated"));
+    } catch (error) {
+      console.error("Error deleting project:", error);
+      alert(
+        `Failed to delete: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  // FIX Issue #1: Fixed cancel run - use response.ok and await response.json()
+  const handleCancelRun = async (runToken: string) => {
+    setLoading(runToken);
+    try {
+      const response = await fetch(`/api/runs/${runToken}/cancel`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -166,21 +193,16 @@ export default function ProjectsList({
         },
       });
 
-      if (!response.status || response.status >= 400) {
-        const errorData = response.data;
+      if (!response.ok) {
+        const errorData = await response.json();
         throw new Error(
           errorData.message || `Failed to cancel run: ${response.statusText}`,
         );
       }
 
-      const data = response.data;
+      const data = await response.json();
       console.log("Run cancelled successfully:", data);
-
-      // Trigger a refresh of projects to update status
-      if (onRunProject) {
-        // Force a refresh by calling the parent's refresh mechanism
-        window.dispatchEvent(new CustomEvent("projectStatusUpdated"));
-      }
+      window.dispatchEvent(new CustomEvent("projectStatusUpdated"));
     } catch (error) {
       console.error("Error cancelling run:", error);
       alert(
@@ -426,6 +448,8 @@ export default function ProjectsList({
                         </td>
                         <td className="px-4 py-4">
                           <div className="flex items-center justify-center gap-2">
+
+                            {/* View Details */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -436,6 +460,8 @@ export default function ProjectsList({
                             >
                               <ExternalLink size={14} />
                             </button>
+
+                            {/* Run Project */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -451,6 +477,8 @@ export default function ProjectsList({
                                 <Play size={14} />
                               )}
                             </button>
+
+                            {/* Schedule */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -461,6 +489,8 @@ export default function ProjectsList({
                             >
                               <Clock size={14} />
                             </button>
+
+                            {/* Statistics */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -474,6 +504,8 @@ export default function ProjectsList({
                             >
                               <BarChart3 size={14} />
                             </button>
+
+                            {/* View CSV */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -487,15 +519,17 @@ export default function ProjectsList({
                             >
                               <FileJson size={14} />
                             </button>
+
+                            {/* FIX Issue #1: Stop Running Project - only shows when running */}
                             {project.last_run?.status === "running" && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleCancelRun(project.token);
+                                  handleCancelRun(project.last_run!.run_token);
                                 }}
                                 disabled={loading === project.token}
                                 className="inline-flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-all duration-200 shadow-md hover:shadow-red-500/25 disabled:shadow-none"
-                                title="Cancel Run"
+                                title="Stop Running Project"
                               >
                                 {loading === project.token ? (
                                   <Loader2 size={14} className="animate-spin" />
@@ -504,6 +538,23 @@ export default function ProjectsList({
                                 )}
                               </button>
                             )}
+
+                            {/* FIX Issue #2: Delete Project from site and ParseHub app */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteProject(
+                                  project.token,
+                                  project.name || project.token,
+                                );
+                              }}
+                              disabled={loading === project.token}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-700 hover:bg-rose-800 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-all duration-200 shadow-md hover:shadow-rose-500/25 disabled:shadow-none"
+                              title="Delete Project"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+
                           </div>
                         </td>
                       </tr>

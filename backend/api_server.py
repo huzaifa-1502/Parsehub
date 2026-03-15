@@ -1952,6 +1952,61 @@ def get_incomplete_projects():
 
 # ========== ERROR HANDLERS ==========
 
+@app.route('/api/projects/<token>/delete', methods=['DELETE'])
+def delete_project(token: str):
+    """
+    Delete a project from ParseHub AND from local database
+    Issue #2: Delete project from site also deletes it from ParseHub app
+    """
+    if not validate_api_key(request):
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        api_key = os.getenv('PARSEHUB_API_KEY')
+
+        if not api_key:
+            return jsonify({'error': 'Missing API key configuration'}), 500
+
+        logger.info(f'[API] Deleting project: {token}')
+
+        # Step 1: Delete from ParseHub API
+        delete_url = f'https://www.parsehub.com/api/v2/projects/{token}'
+        response = requests.delete(
+            delete_url,
+            params={'api_key': api_key},
+            timeout=10
+        )
+
+        if response.status_code not in [200, 204]:
+            logger.error(f'[API] ParseHub delete failed: {response.status_code} - {response.text}')
+            return jsonify({
+                'error': 'Failed to delete project from ParseHub',
+                'details': response.text
+            }), response.status_code
+
+        # Step 2: Delete from local database
+        try:
+            cursor = g.db.cursor()
+            cursor.execute('DELETE FROM projects WHERE token = %s', (token,))
+            cursor.execute('DELETE FROM metadata WHERE project_token = %s', (token,))
+            g.db.commit()
+        except Exception as db_err:
+            logger.warning(f'[API] DB cleanup warning for {token}: {db_err}')
+
+        logger.info(f'[API] Project deleted successfully: {token}')
+        return jsonify({
+            'success': True,
+            'message': f'Project {token} deleted successfully from ParseHub and database'
+        }), 200
+
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Request timeout'}), 504
+    except requests.exceptions.RequestException as e:
+        return jsonify({'error': 'Network error', 'details': str(e)}), 500
+    except Exception as e:
+        logger.error(f'[API] Error deleting project {token}: {e}')
+        return jsonify({'error': str(e)}), 500
+
 def _rid() -> str:
     """Return the current request_id (set by before_request), or a fallback."""
     return getattr(g, 'request_id', uuid.uuid4().hex[:12])
