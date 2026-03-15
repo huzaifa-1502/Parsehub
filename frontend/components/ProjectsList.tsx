@@ -1,5 +1,4 @@
 "use client";
-import apiClient from "@/lib/apiClient";
 import { getApiHeaders } from "@/lib/apiBase";
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
